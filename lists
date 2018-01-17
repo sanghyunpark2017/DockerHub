@@ -1,0 +1,8 @@
+
+
+
+homeplus/mycentos
+-image: official centos
+-command: /bin/sh
+-installs: net-tools, wget, unzip
+
