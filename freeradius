@@ -1,0 +1,343 @@
+
+
+k1vfreeradius-VIP -  10.10.24.40
+
+k1vfreeradius1 -  10.10.24.41
+k1vfreeradius2 -  10.10.24.42
+
+k1vlinotp-VIP - 10.10.29.47
+
+k1vlinotp1 - 10.10.29.48
+k1vlinotp2 - 10.10.29.49
+
+
+#가상서버 스펙
+2코어, 2GB 메모리, 20GB 디스크
+
+sudo passwd
+
+su -
+
+sudo apt-get install open-vm-tools
+
+ps -ef | grep vmtoolsd
+
+vi /etc/ssh/sshd_config
+
+PermitRootLogin without-password -> yes
+
+service ssh restart
+
+
+cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+
+vi /etc/sysctl.conf
+
+------------------------------------------------------------
+#IPv6 disable
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+------------------------------------------------------------
+
+sudo sysctl -p
+
+cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+
+
+vi /etc/hosts
+10.10.24.41  k1vfreeradius1.homeplusnet.co.kr  kivlinotp1
+10.10.24.42  k1vfreeradius2.homeplusnet.co.kr  kivlinotp2
+
+
+
+
+sudo ufw enable
+
+
+--필수
+sudo ufw allow from 10.0.0.0/8 to any port 22 
+sudo ufw allow from 10.0.0.0/8 to any port 1812
+sudo ufw allow from 10.0.0.0/8 to any port 
+sudo ufw allow from 10.0.0.0/8 to any port 3306 
+
+
+--> OTP(80, 443) :  나중에 RADIUS서버와 관리자만 오픈할 것
+--> MySQL,(3306) :  나중에 RADIUS서버만 허용할 것
+
+
+sudo ufw status verbose
+
+sudo ufw status numbered
+
+(패스)sudo ufw delete 3
+
+sudo ufw status numbered
+
+sudo ufw reload
+
+--bk스크립트
+
+cd /sbin
+vi bk
+
+------------------------------------------------------------
+#CP.ALL.ENABLE
+
+for i in $*
+do
+        if [ -f $i ]
+        then
+                cp -pf "$1" "$1".`date +"%y%m%d.%H%M%S"`
+        else
+                echo "`basename $0` <filenames>"
+        fi
+done
+------------------------------------------------------------
+
+ 
+chmod 777 bk
+
+
+--NTP설정
+sudo apt-get install ntp
+
+cd /etc
+bk ntp.conf
+
+
+vi /etc/ntp.conf
+
+------------------------------------------------------------
+server 10.10.24.80 iburst
+server kr.pool.ntp.org iburst
+------------------------------------------------------------
+
+sudo service ntp restart
+
+sudo ntpq -p
+
+--> 수분 이후 동기화 완료
+
+reboot
+
+양쪽 서버 시간 동일한지 확인
+
+
+
+
+>>>>>>>>> 스냅샷 생성
+
+
+
+######################################################
+Connect FreeRADIUS to LinOTP via perl plugin
+######################################################
+
+http://www.linotp.org/howtos/howto-radius.html
+
+
+ 
+apt-get install freeradius
+
+ps -ef | grep freeradius
+
+
+
+echo 'deb http://www.linotp.org/apt/debian wheezy linotp' > /etc/apt/sources.list.d/linotp.list
+
+apt-key adv --keyserver eu.pool.sks-keyservers.net --recv-keys 913DFF12F86258E5
+
+
+apt-get update
+
+apt-get install linotp-freeradius-perl
+
+
+#초기 디렉토리 백업 후 기본설정파일 3개 삭제
+cp -a /etc/freeradius /etc/freeradius_original
+
+rm /etc/freeradius/{clients.conf,users}
+
+
+
+
+cd /etc/freeradius
+
+#clients 파일 설정
+
+vi  /etc/freeradius/clients.conf
+------------------------------------------------------------------
+#arbitrary name of the authentification asking client (i.e. VPN server)
+client test1 {
+        ipaddr  = 10.200.187.96  #IP of the client
+        netmask = 32            
+        secret  = SECRET
+}
+
+client test2 {
+        ipaddr  = 10.10.24.42  #IP of the client
+        netmask = 32            
+        secret  = SECRET
+}
+
+
+client vpn1 {
+        ipaddr  = x.x.x.x  #IP of the client
+        netmask = 32            
+        secret  = SECRET
+}
+
+
+client vpn2 {
+        ipaddr  = x.x.x.x  #IP of the client
+        netmask = 32            
+        secret  = SECRET
+}
+------------------------------------------------------------------
+cat /etc/freeradius/clients.conf
+
+
+
+
+
+
+vi  /etc/freeradius/users
+------------------------------------------------------------------
+DEFAULT Auth-type := perl
+------------------------------------------------------------------
+cat /etc/freeradius/users
+
+
+
+
+bk /etc/freeradius/modules/perl
+
+rm /etc/freeradius/modules/perl
+
+
+vi /etc/freeradius/modules/perl
+---------------------------------------------------------
+perl {
+	module = /usr/lib/linotp/radius_linotp.pm
+	}
+---------------------------------------------------------
+cat /etc/freeradius/modules/perl
+
+
+
+ll /usr/lib/linotp/radius_linotp.pm
+
+ll /etc/linotp2/rlm_perl.ini
+
+cd /etc
+
+mkdir linotp2
+
+
+cd /etc/linotp2
+
+vi rlm_perl.ini
+
+---------------------------------------------------------
+#IP of the linotp server
+URL=https://10.10.29.48/validate/simplecheck
+
+#optional: limits search for user to this realm
+REALM=realm1
+
+#optional: only use this UserIdResolver
+#RESCONF=flat_file
+#optional: comment out if everything seems to work fine
+Debug=True
+
+#optional: use this, if you have selfsigned certificates, otherwise comment out
+SSL_CHECK=False
+---------------------------------------------------------
+
+cat /etc/linotp2/rlm_perl.ini
+
+
+
+cd /etc/freeradius/sites-available
+
+vi /etc/freeradius/sites-available/linotp
+
+---------------------------------------------------------
+authorize {
+
+#normalizes maleformed client request before handed on to other modules (see '/etc/freeradius/modules/preprocess')
+        preprocess
+        
+        #  If you are using multiple kinds of realms, you probably
+        #  want to set "ignore_null = yes" for all of them.
+        #  Otherwise, when the first style of realm doesn't match,
+        #  the other styles won't be checked.
+
+#allows a list of realm (see '/etc/freeradius/modules/realm')
+        IPASS
+
+#understands something like USER@REALM and can tell the components apart (see '/etc/freeradius/modules/realm')
+        suffix
+
+#understands USER\REALM and can tell the components apart (see '/etc/freeradius/modules/realm')
+        ntdomain
+       
+        #  Read the 'users' file to learn about special configuration which should be applied for 
+        # certain users (see '/etc/freeradius/modules/files')
+        files
+       
+        # allows to let authentification to expire (see '/etc/freeradius/modules/expiration')
+        expiration
+
+        # allows to define valid service-times (see '/etc/freeradius/modules/logintime')
+        logintime
+
+        # We got no radius_shortname_map!
+        pap
+}
+
+#here the linotp perl module is called for further processing
+authenticate {
+        perl
+}
+---------------------------------------------------------
+
+cat /etc/freeradius/sites-available/linotp
+
+
+
+cd /etc/freeradius/sites-available
+
+ln -s ../sites-available/linotp /etc/freeradius/sites-enabled
+
+
+
+rm /etc/freeradius/sites-enabled/{default,inner-tunnel}
+
+
+service freeradius stop
+
+freeradius -X
+
+
+
+
+
+##################
+testing
+################
+
+apt-get install freeradius-utils
+
+
+
+radtest user01 1234  10.10.24.41 0 SECRET
+
+
+
+ 
+
+
+>>>>>>>>>>>>> 성공 <<<<<<<<<<<<<<<<<<<
+
